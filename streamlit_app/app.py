@@ -8,7 +8,8 @@ import logging
 from typing import Tuple, Optional, Dict, Any
 
 # Configuration
-API_URL = "http://localhost:5001/api"
+import os
+API_URL = os.getenv("API_URL", "https://expensepro-wabu.onrender.com/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
