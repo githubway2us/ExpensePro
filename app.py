@@ -11,7 +11,9 @@ from flask_jwt_extended import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import extract
 import logging
+from zoneinfo import ZoneInfo
 
 # ------------------- CONFIG -------------------
 app = Flask(__name__)
@@ -34,7 +36,7 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(ZoneInfo("Asia/Bangkok")))
 
     def to_dict(self):
         return {
@@ -49,7 +51,7 @@ class Category(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     name = db.Column(db.String(120), nullable=False)
     type = db.Column(db.String(20), default="expense")  # expense/income
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(ZoneInfo("Asia/Bangkok")))
 
     def to_dict(self):
         return {
@@ -71,7 +73,7 @@ class Expense(db.Model):
     project = db.Column(db.String(120))
     tags = db.Column(db.String(255))
     note = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(ZoneInfo("Asia/Bangkok")))
 
     def to_dict(self):
         return {
@@ -138,9 +140,10 @@ def create_default_categories(user_id: int) -> None:
         logger.error(f"Failed to create default categories for user {user_id}: {str(e)}")
 
 def validate_date(date_str: str) -> Optional[datetime.date]:
-    """Validate and parse date string."""
+    """Validate and parse date string, assuming input is in Asia/Bangkok timezone."""
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
+        local_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=ZoneInfo("Asia/Bangkok"))
+        return local_date.date()
     except ValueError:
         return None
 
@@ -179,7 +182,6 @@ def register():
         logger.error(f"Registration error: {str(e)}")
         return jsonify({"msg": "Internal server error"}), 500
 
-# ในไฟล์ backend (ส่วน /api/login)
 @app.route('/api/login', methods=['POST'])
 def login():
     try:
@@ -192,7 +194,6 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({"msg": "Invalid credentials"}), 401
 
-        # แปลง user.id เป็น string
         token = create_access_token(identity=str(user.id))
         logger.info(f"User logged in: {data['username']}")
         return jsonify({"access_token": token, "user_id": user.id}), 200
@@ -410,7 +411,7 @@ def export_csv():
             query = query.filter(Expense.date <= date_obj)
 
         output = io.StringIO()
-        writer = csv.writer(output, lineterminator='\n')  # ใช้ lineterminator=\n สำหรับความเข้ากันได้
+        writer = csv.writer(output, lineterminator='\n')
         writer.writerow(["date", "amount", "category", "merchant", "account", "project", "tags", "note"])
         for e in query.all():
             cat = Category.query.get(e.category_id)
@@ -425,17 +426,14 @@ def export_csv():
                 e.note or ""
             ])
         output.seek(0)
-        filename = f"expenses_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+        filename = f"expenses_{datetime.now(ZoneInfo('Asia/Bangkok')).strftime('%Y%m%d')}.csv"
         logger.info(f"CSV exported for user {uid}")
         return send_file(
-            io.BytesIO(output.getvalue().encode('utf-8')),  # Encode เป็น UTF-8
+            io.BytesIO(output.getvalue().encode('utf-8')),
             mimetype='text/csv',
             as_attachment=True,
             download_name=filename
         )
-    except JWTDecodeError:
-        logger.error("Invalid JWT token")
-        return jsonify({"msg": "Invalid or expired token"}), 401
     except Exception as e:
         logger.error(f"CSV export error: {str(e)}")
         return jsonify({"msg": "Internal server error"}), 500
@@ -446,29 +444,71 @@ def export_csv():
 def summary():
     try:
         uid = get_jwt_identity()
-        today = datetime.utcnow().date()
-        month_start = today.replace(day=1)
+        period = request.args.get('period', 'weekly')  # ค่าเริ่มต้นเป็น weekly
+        from_date = request.args.get('from')
+        to_date = request.args.get('to')
 
-        total_expense = db.session.query(db.func.sum(Expense.amount))\
-            .join(Category)\
-            .filter(
-                Expense.user_id == uid,
-                Category.type == 'expense',
-                Expense.date >= month_start
-            ).scalar() or 0
+        # ตรวจสอบพารามิเตอร์ period
+        if period not in ['daily', 'weekly', 'monthly', 'yearly']:
+            return jsonify({"msg": "Invalid period parameter"}), 400
 
+        # กำหนดเขตเวลาไทย
+        tz = ZoneInfo("Asia/Bangkok")
+        today = datetime.now(tz).date()
+
+        # กำหนดช่วงวันที่เริ่มต้นและสิ้นสุด
+        if from_date and to_date:
+            start_date = validate_date(from_date)
+            end_date = validate_date(to_date)
+            if not start_date or not end_date:
+                return jsonify({"msg": "Invalid date format"}), 400
+            if start_date > end_date:
+                return jsonify({"msg": "Start date must be before end date"}), 400
+        else:
+            if period == 'daily':
+                start_date = today
+                end_date = today
+            elif period == 'weekly':
+                start_date = today - timedelta(days=today.weekday())  # เริ่มจากวันจันทร์
+                end_date = start_date + timedelta(days=6)  # สิ้นสุดวันอาทิตย์
+            elif period == 'monthly':
+                start_date = today.replace(day=1)
+                end_date = (start_date + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+            else:  # yearly
+                start_date = today.replace(month=1, day=1)
+                end_date = today.replace(month=12, day=31)
+
+        # คำนวณรายรับรวม
         total_income = db.session.query(db.func.sum(Expense.amount))\
             .join(Category)\
             .filter(
                 Expense.user_id == uid,
                 Category.type == 'income',
-                Expense.date >= month_start
+                Expense.date >= start_date,
+                Expense.date <= end_date
             ).scalar() or 0
 
+        # คำนวณรายจ่ายรวม
+        total_expense = db.session.query(db.func.sum(Expense.amount))\
+            .join(Category)\
+            .filter(
+                Expense.user_id == uid,
+                Category.type == 'expense',
+                Expense.date >= start_date,
+                Expense.date <= end_date
+            ).scalar() or 0
+
+        # คำนวณยอดคงเหลือ
+        balance = total_income - total_expense
+
         return jsonify({
-            "total_expense": float(total_expense),
             "total_income": float(total_income),
-            "balance": float(total_income - total_expense)
+            "total_expense": float(total_expense),
+            "balance": float(balance),
+            "period": period,
+            "from_date": start_date.isoformat(),
+            "to_date": end_date.isoformat(),
+            "currency": "THB"
         }), 200
     except Exception as e:
         logger.error(f"Summary error: {str(e)}")
@@ -481,19 +521,21 @@ def analysis():
     try:
         uid = get_jwt_identity()
         group_by = request.args.get('group_by', 'category_id')
+        period = request.args.get('period', 'monthly')
         from_date = request.args.get('from')
         to_date = request.args.get('to')
         only_expense = request.args.get('only_expense') == '1'
 
         if group_by not in ['category_id', 'merchant', 'account', 'project']:
             return jsonify({"msg": "Invalid group_by parameter"}), 400
+        if period not in ['daily', 'weekly', 'monthly', 'yearly']:
+            return jsonify({"msg": "Invalid period parameter"}), 400
 
-        query = db.session.query(getattr(Expense, group_by), db.func.sum(Expense.amount))\
-            .join(Category)\
-            .filter(Expense.user_id == uid)
+        query = db.session.query(Expense).join(Category).filter(Expense.user_id == uid)
 
         if only_expense:
             query = query.filter(Category.type == 'expense')
+
         if from_date:
             date_obj = validate_date(from_date)
             if not date_obj:
@@ -505,8 +547,75 @@ def analysis():
                 return jsonify({"msg": "Invalid to date format"}), 400
             query = query.filter(Expense.date <= date_obj)
 
-        results = query.group_by(getattr(Expense, group_by)).all()
-        return jsonify([{"group": r[0], "total": float(r[1])} for r in results]), 200
+        if period == 'daily':
+            query = query.group_by(
+                Expense.date,
+                getattr(Expense, group_by)
+            ).with_entities(
+                Expense.date.label('date'),
+                getattr(Expense, group_by).label('group'),
+                db.func.sum(Expense.amount).label('total')
+            )
+        elif period == 'monthly':
+            query = query.group_by(
+                extract('year', Expense.date),
+                extract('month', Expense.date),
+                getattr(Expense, group_by)
+            ).with_entities(
+                extract('year', Expense.date).label('year'),
+                extract('month', Expense.date).label('month'),
+                getattr(Expense, group_by).label('group'),
+                db.func.sum(Expense.amount).label('total')
+            )
+        elif period == 'weekly':
+            query = query.group_by(
+                extract('year', Expense.date),
+                db.func.strftime('%W', Expense.date),
+                getattr(Expense, group_by)
+            ).with_entities(
+                extract('year', Expense.date).label('year'),
+                db.func.strftime('%W', Expense.date).label('week'),
+                getattr(Expense, group_by).label('group'),
+                db.func.sum(Expense.amount).label('total')
+            )
+        else:  # yearly
+            query = query.group_by(
+                extract('year', Expense.date),
+                getattr(Expense, group_by)
+            ).with_entities(
+                extract('year', Expense.date).label('year'),
+                getattr(Expense, group_by).label('group'),
+                db.func.sum(Expense.amount).label('total')
+            )
+
+        results = query.all()
+        
+        response = []
+        for row in results:
+            result_dict = {
+                "group": row.group,
+                "total": float(row.total)
+            }
+            if period == 'daily':
+                result_dict["date"] = row.date.isoformat()
+            elif period == 'monthly':
+                result_dict["year"] = int(row.year)
+                result_dict["month"] = int(row.month)
+            elif period == 'weekly':
+                result_dict["year"] = int(row.year)
+                result_dict["week"] = int(row.week)
+            else:  # yearly
+                result_dict["year"] = int(row.year)
+            response.append(result_dict)
+
+        response.sort(key=lambda x: (
+            x.get('year', 0),
+            x.get('month', 0),
+            x.get('week', 0),
+            x.get('date', '')
+        ))
+
+        return jsonify(response), 200
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
         return jsonify({"msg": "Internal server error"}), 500
