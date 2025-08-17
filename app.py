@@ -95,14 +95,37 @@ with app.app_context():
 def create_default_categories(user_id: int) -> None:
     """Create default categories for a new user."""
     defaults = [
-        {"name": "อาหาร", "type": "expense"},
-        {"name": "เดินทาง", "type": "expense"},
-        {"name": "ที่พัก", "type": "expense"},
-        {"name": "ลงทุน", "type": "expense"},
-        {"name": "จิปาถะ", "type": "expense"},
-        {"name": "อื่นๆ", "type": "expense"},
+        {"name": "ดอกรัก", "type": "expense"},
+        {"name": "มะลิ", "type": "expense"},
+        {"name": "ดาวเรือง", "type": "expense"},
+        {"name": "กุหลาบมอญ", "type": "expense"},
+        {"name": "บายศรี", "type": "expense"},
+        {"name": "จำปี", "type": "expense"},
+        {"name": "หมาก", "type": "expense"},
+        {"name": "บุหรี่", "type": "expense"},
+        {"name": "อ้อย", "type": "expense"},
+        {"name": "มัม ใหญ่", "type": "expense"},
+        {"name": "มัน เล็ก", "type": "expense"},
+        {"name": "กุหลาบใหญ่", "type": "expense"},
+        {"name": "กล้วย", "type": "expense"},
+        {"name": "แคสเปียร์", "type": "expense"},
+        {"name": "คาเนชั่น", "type": "expense"},
+        {"name": "บัว", "type": "expense"},
+        {"name": "ดาวกำ", "type": "expense"},
+        {"name": "ไม้กำ", "type": "expense"},
+        {"name": "ปีโป้", "type": "expense"},
+        {"name": "ดีโด้", "type": "expense"},
+        {"name": "ตัวดูด", "type": "expense"},
+        {"name": "เยลลี่", "type": "expense"},
+        {"name": "ผลไม้", "type": "expense"},
+        {"name": "ทองรวม", "type": "expense"},
+        {"name": "น้ำแดง", "type": "expense"},
+        {"name": "น้ำอบ", "type": "expense"},
+        {"name": "อื่น", "type": "expense"},
         {"name": "ขายดอกไม้", "type": "income"},
-        {"name": "เงินพิเศษ", "type": "income"}
+        {"name": "ขายสินค้า", "type": "income"},
+        {"name": "เงินพิเศษ", "type": "income"},
+        {"name": "เงินเก็บ", "type": "income"}
     ]
     try:
         for cat in defaults:
